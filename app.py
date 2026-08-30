@@ -339,88 +339,84 @@ def docx_to_pdf():
         )
 
 
+```python
 # ============================================================
-# PDF → WORD
+# PDF → WORD / DOCX
+# Using pdf2docx instead of LibreOffice
 # ============================================================
 
 @app.route("/pdf-to-word", methods=["POST"])
 def pdf_to_docx():
 
-    print(
-        "==========================================",
-        flush=True
-    )
-
-    print(
-        "PDF TO WORD ROUTE STARTED",
-        flush=True
-    )
-
-    print(
-        "==========================================",
-        flush=True
-    )
+    print("==========================================", flush=True)
+    print("PDF TO WORD ROUTE STARTED", flush=True)
+    print("==========================================", flush=True)
 
     if "file" not in request.files:
 
-        print(
-            "NO FILE RECEIVED",
-            flush=True
-        )
+        print("NO FILE RECEIVED", flush=True)
 
         return jsonify({
-            "error":
-            "No PDF file uploaded."
+            "error": "No PDF file uploaded."
         }), 400
 
+
     uploaded_file = request.files["file"]
+
 
     if uploaded_file.filename == "":
 
         return jsonify({
-            "error":
-            "No file selected."
+            "error": "No file selected."
         }), 400
 
+
     original_name = uploaded_file.filename
+
 
     if not original_name.lower().endswith(".pdf"):
 
         return jsonify({
-            "error":
-            "Only PDF files are supported."
+            "error": "Only PDF files are supported."
         }), 400
 
-    safe_name = secure_filename(
-        original_name
-    )
 
     job_id = str(uuid.uuid4())
+
 
     job_folder = os.path.join(
         BASE_FOLDER,
         job_id
     )
 
+
     os.makedirs(
         job_folder,
         exist_ok=True
     )
+
 
     input_file = os.path.join(
         job_folder,
         "input.pdf"
     )
 
-    uploaded_file.save(
-        input_file
+
+    output_file = os.path.join(
+        job_folder,
+        "converted.docx"
     )
+
+
+    uploaded_file.save(input_file)
+
 
     print(
         "PDF SAVED:",
         input_file,
         flush=True
     )
+
 
     print(
         "PDF SIZE:",
@@ -429,67 +425,53 @@ def pdf_to_docx():
         flush=True
     )
 
+
     try:
 
-        # ====================================================
-        # CREATE PRIVATE LIBREOFFICE PROFILE
-        # ====================================================
+        # ----------------------------------------------------
+        # Import pdf2docx
+        # ----------------------------------------------------
 
-        lo_profile = os.path.join(
-            job_folder,
-            "lo-profile"
-        )
+        from pdf2docx import Converter
 
-        os.makedirs(
-            lo_profile,
-            exist_ok=True
-        )
-
-        # ====================================================
-        # PDF → DOCX
-        # ====================================================
-
-        command = [
-
-            "libreoffice",
-
-            "--headless",
-
-            "--nologo",
-
-            "--nodefault",
-
-            "--nofirststartwizard",
-
-            "--norestore",
-
-            f"-env:UserInstallation=file://{lo_profile}",
-
-            "--convert-to",
-
-            "docx:Office Open XML Text",
-
-            "--outdir",
-
-            job_folder,
-
-            input_file
-        ]
 
         print(
-            "STARTING PDF → DOCX",
+            "pdf2docx imported successfully",
             flush=True
         )
 
-        result, stdout, stderr = run_libreoffice(
-            command,
-            timeout=180
+
+        # ----------------------------------------------------
+        # Convert PDF → DOCX
+        # ----------------------------------------------------
+
+        print(
+            "STARTING PDF → DOCX CONVERSION",
+            flush=True
         )
 
-        output_file = os.path.join(
-            job_folder,
-            "input.docx"
+
+        converter = Converter(
+            input_file
         )
+
+
+        try:
+
+            converter.convert(
+                output_file,
+                start=0,
+                end=None
+            )
+
+        finally:
+
+            converter.close()
+
+
+        # ----------------------------------------------------
+        # Check output
+        # ----------------------------------------------------
 
         print(
             "EXPECTED OUTPUT:",
@@ -497,45 +479,56 @@ def pdf_to_docx():
             flush=True
         )
 
+
         print(
             "OUTPUT EXISTS:",
             os.path.exists(output_file),
             flush=True
         )
 
+
         if os.path.exists(output_file):
+
+            output_size = os.path.getsize(
+                output_file
+            )
 
             print(
                 "OUTPUT SIZE:",
-                os.path.getsize(output_file),
+                output_size,
                 "bytes",
                 flush=True
             )
 
-        # ====================================================
+        else:
+
+            output_size = 0
+
+
+        # ----------------------------------------------------
         # SUCCESS
-        # ====================================================
+        # ----------------------------------------------------
 
         if (
-            result.returncode == 0
-            and
             os.path.exists(output_file)
             and
-            os.path.getsize(output_file) > 0
+            output_size > 0
         ):
 
             download_name = (
                 os.path.splitext(
-                    safe_name
+                    original_name
                 )[0]
                 +
                 ".docx"
             )
 
+
             print(
                 "PDF → DOCX SUCCESS",
                 flush=True
             )
+
 
             return send_file(
 
@@ -552,23 +545,16 @@ def pdf_to_docx():
 
             )
 
-        # ====================================================
-        # FAILURE
-        # ====================================================
 
-        details = (
-            stderr
-            or
-            stdout
-            or
-            f"LibreOffice exited with code {result.returncode}"
-        )
+        # ----------------------------------------------------
+        # FAILURE
+        # ----------------------------------------------------
 
         print(
-            "PDF → DOCX FAILED:",
-            details,
+            "PDF → DOCX FAILED: Output file was not created.",
             flush=True
         )
+
 
         return jsonify({
 
@@ -576,40 +562,19 @@ def pdf_to_docx():
             "PDF to Word conversion failed.",
 
             "details":
-            details,
-
-            "return_code":
-            result.returncode,
-
-            "output_exists":
-            os.path.exists(output_file)
+            "The converter did not create the DOCX file."
 
         }), 500
 
-    except subprocess.TimeoutExpired:
-
-        print(
-            "PDF → DOCX TIMEOUT",
-            flush=True
-        )
-
-        return jsonify({
-
-            "error":
-            "PDF to Word conversion timed out.",
-
-            "details":
-            "LibreOffice exceeded the 180 second limit."
-
-        }), 500
 
     except Exception as error:
 
         print(
-            "PDF → DOCX EXCEPTION:",
-            str(error),
+            "PDF → DOCX ERROR:",
+            repr(error),
             flush=True
         )
+
 
         return jsonify({
 
@@ -621,6 +586,7 @@ def pdf_to_docx():
 
         }), 500
 
+
     finally:
 
         print(
@@ -629,6 +595,7 @@ def pdf_to_docx():
             flush=True
         )
 
+
         shutil.rmtree(
 
             job_folder,
@@ -636,23 +603,4 @@ def pdf_to_docx():
             ignore_errors=True
 
         )
-
-
-# ============================================================
-# START SERVER
-# ============================================================
-
-if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            "10000"
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
 
