@@ -1,4 +1,3 @@
-```dockerfile
 FROM python:3.11-slim
 
 # Install LibreOffice and useful fonts
@@ -23,4 +22,3 @@ COPY app.py .
 EXPOSE 10000
 
 CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "1", "--timeout", "180", "app:app"]
-```
