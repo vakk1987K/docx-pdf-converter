@@ -3,33 +3,48 @@ import os
 import uuid
 import shutil
 import subprocess
+
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+
 
 # ============================================================
 # APP SETUP
 # ============================================================
 
 app = Flask(__name__)
+
 CORS(app)
+
+BASE_FOLDER = "/tmp/file_converter"
+
+os.makedirs(
+    BASE_FOLDER,
+    exist_ok=True
+)
+
+
+# ============================================================
+# REQUEST LOGGING
+# ============================================================
 
 @app.before_request
 def log_request():
+
     print(
         f"REQUEST: {request.method} {request.path}",
         flush=True
     )
-BASE_FOLDER = "/tmp/file_converter"
-os.makedirs(BASE_FOLDER, exist_ok=True)
 
 
 # ============================================================
-# HOME / SERVER TEST
+# HOME
 # ============================================================
 
 @app.route("/", methods=["GET"])
 def home():
+
     return jsonify({
         "status": "online",
         "service": "TeluguTech777 File Converter",
@@ -41,11 +56,14 @@ def home():
 
 
 # ============================================================
-# LIBREOFFICE TEST
+# HEALTH
 # ============================================================
 
-def check_libreoffice():
+@app.route("/health", methods=["GET"])
+def health():
+
     try:
+
         result = subprocess.run(
             ["libreoffice", "--version"],
             stdout=subprocess.PIPE,
@@ -53,41 +71,60 @@ def check_libreoffice():
             timeout=20
         )
 
-        return {
-            "installed": result.returncode == 0,
-            "version": (
-                result.stdout.decode("utf-8", errors="ignore").strip()
-                or result.stderr.decode("utf-8", errors="ignore").strip()
-            )
-        }
+        version = (
+            result.stdout.decode(
+                "utf-8",
+                errors="ignore"
+            ).strip()
+            or
+            result.stderr.decode(
+                "utf-8",
+                errors="ignore"
+            ).strip()
+        )
+
+        return jsonify({
+            "status": "ok",
+            "libreoffice": {
+                "installed": result.returncode == 0,
+                "version": version
+            }
+        })
 
     except Exception as error:
-        return {
-            "installed": False,
-            "version": str(error)
-        }
 
-
-@app.route("/health", methods=["GET"])
-def health():
-    lo = check_libreoffice()
-
-    return jsonify({
-        "status": "ok",
-        "libreoffice": lo
-    })
+        return jsonify({
+            "status": "error",
+            "libreoffice": {
+                "installed": False,
+                "version": str(error)
+            }
+        }), 500
 
 
 # ============================================================
 # LIBREOFFICE HELPER
 # ============================================================
 
-def run_libreoffice(command, timeout=180):
+def run_libreoffice(
+    command,
+    timeout=180
+):
+
+    print(
+        "RUNNING:",
+        " ".join(command),
+        flush=True
+    )
 
     result = subprocess.run(
+
         command,
+
         stdout=subprocess.PIPE,
+
         stderr=subprocess.PIPE,
+
         timeout=timeout
     )
 
@@ -101,6 +138,24 @@ def run_libreoffice(command, timeout=180):
         errors="ignore"
     ).strip()
 
+    print(
+        "RETURN CODE:",
+        result.returncode,
+        flush=True
+    )
+
+    print(
+        "STDOUT:",
+        stdout,
+        flush=True
+    )
+
+    print(
+        "STDERR:",
+        stderr,
+        flush=True
+    )
+
     return result, stdout, stderr
 
 
@@ -111,7 +166,13 @@ def run_libreoffice(command, timeout=180):
 @app.route("/convert", methods=["POST"])
 def docx_to_pdf():
 
+    print(
+        "DOCX TO PDF ROUTE STARTED",
+        flush=True
+    )
+
     if "file" not in request.files:
+
         return jsonify({
             "error": "No file uploaded."
         }), 400
@@ -119,6 +180,7 @@ def docx_to_pdf():
     uploaded_file = request.files["file"]
 
     if uploaded_file.filename == "":
+
         return jsonify({
             "error": "No file selected."
         }), 400
@@ -126,11 +188,14 @@ def docx_to_pdf():
     original_name = uploaded_file.filename
 
     if not original_name.lower().endswith(".docx"):
+
         return jsonify({
             "error": "Only DOCX files are supported."
         }), 400
 
-    safe_name = secure_filename(original_name)
+    safe_name = secure_filename(
+        original_name
+    )
 
     job_id = str(uuid.uuid4())
 
@@ -139,14 +204,19 @@ def docx_to_pdf():
         job_id
     )
 
-    os.makedirs(job_folder, exist_ok=True)
+    os.makedirs(
+        job_folder,
+        exist_ok=True
+    )
 
     input_file = os.path.join(
         job_folder,
         "input.docx"
     )
 
-    uploaded_file.save(input_file)
+    uploaded_file.save(
+        input_file
+    )
 
     try:
 
@@ -161,64 +231,104 @@ def docx_to_pdf():
         )
 
         command = [
+
             "libreoffice",
+
             "--headless",
+
             "--nologo",
+
             "--nodefault",
+
             "--nofirststartwizard",
+
             "--norestore",
+
             f"-env:UserInstallation=file://{lo_profile}",
+
             "--convert-to",
+
             "pdf",
+
             "--outdir",
+
             job_folder,
+
             input_file
         ]
 
-        result, stdout, stderr = run_libreoffice(command)
+        result, stdout, stderr = run_libreoffice(
+            command
+        )
 
         output_file = os.path.join(
             job_folder,
             "input.pdf"
         )
 
-        if result.returncode != 0 or not os.path.exists(output_file):
+        if (
+            result.returncode != 0
+            or
+            not os.path.exists(output_file)
+        ):
 
             details = (
                 stderr
-                or stdout
-                or f"LibreOffice exited with code {result.returncode}"
+                or
+                stdout
+                or
+                "LibreOffice did not create the PDF."
             )
 
             return jsonify({
-                "error": "DOCX to PDF conversion failed.",
-                "details": details
+
+                "error":
+                "DOCX to PDF conversion failed.",
+
+                "details":
+                details
+
             }), 500
 
         download_name = (
-            os.path.splitext(safe_name)[0]
-            + ".pdf"
+            os.path.splitext(
+                safe_name
+            )[0]
+            +
+            ".pdf"
         )
 
         return send_file(
+
             output_file,
+
             as_attachment=True,
+
             download_name=download_name,
+
             mimetype="application/pdf"
+
         )
 
     except subprocess.TimeoutExpired:
 
         return jsonify({
+
             "error":
-            "Conversion timed out. The document may be too large or complex."
+            "DOCX to PDF conversion timed out."
+
         }), 500
 
     except Exception as error:
 
         return jsonify({
-            "error": "DOCX to PDF conversion failed.",
-            "details": str(error)
+
+            "error":
+            "DOCX to PDF conversion failed.",
+
+            "details":
+            str(error)
+
         }), 500
 
     finally:
@@ -230,32 +340,60 @@ def docx_to_pdf():
 
 
 # ============================================================
-# PDF → WORD / DOCX
+# PDF → WORD
 # ============================================================
 
 @app.route("/pdf-to-word", methods=["POST"])
 def pdf_to_docx():
 
+    print(
+        "==========================================",
+        flush=True
+    )
+
+    print(
+        "PDF TO WORD ROUTE STARTED",
+        flush=True
+    )
+
+    print(
+        "==========================================",
+        flush=True
+    )
+
     if "file" not in request.files:
+
+        print(
+            "NO FILE RECEIVED",
+            flush=True
+        )
+
         return jsonify({
-            "error": "No PDF file uploaded."
+            "error":
+            "No PDF file uploaded."
         }), 400
 
     uploaded_file = request.files["file"]
 
     if uploaded_file.filename == "":
+
         return jsonify({
-            "error": "No file selected."
+            "error":
+            "No file selected."
         }), 400
 
     original_name = uploaded_file.filename
 
     if not original_name.lower().endswith(".pdf"):
+
         return jsonify({
-            "error": "Only PDF files are supported."
+            "error":
+            "Only PDF files are supported."
         }), 400
 
-    safe_name = secure_filename(original_name)
+    safe_name = secure_filename(
+        original_name
+    )
 
     job_id = str(uuid.uuid4())
 
@@ -274,13 +412,28 @@ def pdf_to_docx():
         "input.pdf"
     )
 
-    uploaded_file.save(input_file)
+    uploaded_file.save(
+        input_file
+    )
+
+    print(
+        "PDF SAVED:",
+        input_file,
+        flush=True
+    )
+
+    print(
+        "PDF SIZE:",
+        os.path.getsize(input_file),
+        "bytes",
+        flush=True
+    )
 
     try:
 
-        # ----------------------------------------------------
-        # Create unique LibreOffice profile
-        # ----------------------------------------------------
+        # ====================================================
+        # CREATE PRIVATE LIBREOFFICE PROFILE
+        # ====================================================
 
         lo_profile = os.path.join(
             job_folder,
@@ -292,27 +445,41 @@ def pdf_to_docx():
             exist_ok=True
         )
 
-        # ----------------------------------------------------
+        # ====================================================
         # PDF → DOCX
-        #
-        # LibreOffice uses Draw to import PDF.
-        # We explicitly specify the DOCX filter.
-        # ----------------------------------------------------
+        # ====================================================
 
         command = [
+
             "libreoffice",
+
             "--headless",
+
             "--nologo",
+
             "--nodefault",
+
             "--nofirststartwizard",
+
             "--norestore",
+
             f"-env:UserInstallation=file://{lo_profile}",
+
             "--convert-to",
+
             "docx:Office Open XML Text",
+
             "--outdir",
+
             job_folder,
+
             input_file
         ]
+
+        print(
+            "STARTING PDF → DOCX",
+            flush=True
+        )
 
         result, stdout, stderr = run_libreoffice(
             command,
@@ -324,62 +491,150 @@ def pdf_to_docx():
             "input.docx"
         )
 
-        # ----------------------------------------------------
-        # Check return code AND output file
-        # ----------------------------------------------------
-
-        if result.returncode != 0 or not os.path.exists(output_file):
-
-            details = (
-                stderr
-                or stdout
-                or f"LibreOffice exited with code {result.returncode}"
-            )
-
-            return jsonify({
-                "error": "PDF to Word conversion failed.",
-                "details": details
-            }), 500
-
-        # ----------------------------------------------------
-        # Return DOCX
-        # ----------------------------------------------------
-
-        download_name = (
-            os.path.splitext(safe_name)[0]
-            + ".docx"
-        )
-
-        return send_file(
+        print(
+            "EXPECTED OUTPUT:",
             output_file,
-            as_attachment=True,
-            download_name=download_name,
-            mimetype=(
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
-            )
+            flush=True
         )
+
+        print(
+            "OUTPUT EXISTS:",
+            os.path.exists(output_file),
+            flush=True
+        )
+
+        if os.path.exists(output_file):
+
+            print(
+                "OUTPUT SIZE:",
+                os.path.getsize(output_file),
+                "bytes",
+                flush=True
+            )
+
+        # ====================================================
+        # SUCCESS
+        # ====================================================
+
+        if (
+            result.returncode == 0
+            and
+            os.path.exists(output_file)
+            and
+            os.path.getsize(output_file) > 0
+        ):
+
+            download_name = (
+                os.path.splitext(
+                    safe_name
+                )[0]
+                +
+                ".docx"
+            )
+
+            print(
+                "PDF → DOCX SUCCESS",
+                flush=True
+            )
+
+            return send_file(
+
+                output_file,
+
+                as_attachment=True,
+
+                download_name=download_name,
+
+                mimetype=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                )
+
+            )
+
+        # ====================================================
+        # FAILURE
+        # ====================================================
+
+        details = (
+            stderr
+            or
+            stdout
+            or
+            f"LibreOffice exited with code {result.returncode}"
+        )
+
+        print(
+            "PDF → DOCX FAILED:",
+            details,
+            flush=True
+        )
+
+        return jsonify({
+
+            "error":
+            "PDF to Word conversion failed.",
+
+            "details":
+            details,
+
+            "return_code":
+            result.returncode,
+
+            "output_exists":
+            os.path.exists(output_file)
+
+        }), 500
 
     except subprocess.TimeoutExpired:
 
+        print(
+            "PDF → DOCX TIMEOUT",
+            flush=True
+        )
+
         return jsonify({
+
             "error":
-            "PDF to Word conversion timed out. "
-            "The PDF may be too large or complex."
+            "PDF to Word conversion timed out.",
+
+            "details":
+            "LibreOffice exceeded the 180 second limit."
+
         }), 500
 
     except Exception as error:
 
+        print(
+            "PDF → DOCX EXCEPTION:",
+            str(error),
+            flush=True
+        )
+
         return jsonify({
-            "error": "PDF to Word conversion failed.",
-            "details": str(error)
+
+            "error":
+            "PDF to Word conversion failed.",
+
+            "details":
+            str(error)
+
         }), 500
 
     finally:
 
-        shutil.rmtree(
+        print(
+            "CLEANING JOB FOLDER:",
             job_folder,
+            flush=True
+        )
+
+        shutil.rmtree(
+
+            job_folder,
+
             ignore_errors=True
+
         )
 
 
@@ -392,7 +647,7 @@ if __name__ == "__main__":
     port = int(
         os.environ.get(
             "PORT",
-            10000
+            "10000"
         )
     )
 
@@ -400,3 +655,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+
