@@ -1,4 +1,3 @@
-
 import os
 import uuid
 import shutil
@@ -7,6 +6,7 @@ import subprocess
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from pdf2docx import Converter
 
 
 # ============================================================
