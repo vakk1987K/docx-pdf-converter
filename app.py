@@ -14,6 +14,12 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 CORS(app)
 
+@app.before_request
+def log_request():
+    print(
+        f"REQUEST: {request.method} {request.path}",
+        flush=True
+    )
 BASE_FOLDER = "/tmp/file_converter"
 os.makedirs(BASE_FOLDER, exist_ok=True)
 
