@@ -7,6 +7,7 @@ from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from pdf2docx import Converter
+from pypdf import PdfReader
 
 
 # ============================================================
@@ -15,6 +16,10 @@ from pdf2docx import Converter
 
 app = Flask(__name__)
 
+# Maximum upload size: 25 MB
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
+# CORS
 CORS(app)
 
 BASE_FOLDER = "/tmp/file_converter"
@@ -23,6 +28,24 @@ os.makedirs(
     BASE_FOLDER,
     exist_ok=True
 )
+
+
+# ============================================================
+# SECURITY HEADERS
+# ============================================================
+
+@app.after_request
+def add_security_headers(response):
+
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    response.headers["Cache-Control"] = "no-store"
+
+    return response
 
 
 # ============================================================
@@ -39,6 +62,20 @@ def log_request():
 
 
 # ============================================================
+# FILE SIZE ERROR
+# ============================================================
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+
+    return jsonify({
+        "success": False,
+        "error": "File is too large.",
+        "details": "Maximum allowed file size is 25 MB."
+    }), 413
+
+
+# ============================================================
 # HOME
 # ============================================================
 
@@ -50,7 +87,8 @@ def home():
         "service": "TeluguTech777 File Converter",
         "features": [
             "DOCX to PDF",
-            "PDF to DOCX"
+            "PDF to DOCX",
+            "PDF to TXT"
         ]
     })
 
@@ -161,6 +199,7 @@ def run_libreoffice(
 
 # ============================================================
 # DOCX → PDF
+# EXISTING ROUTE - PRESERVED
 # ============================================================
 
 @app.route("/convert", methods=["POST"])
@@ -339,30 +378,41 @@ def docx_to_pdf():
         )
 
 
-
 # ============================================================
 # PDF → WORD / DOCX
-# Using pdf2docx instead of LibreOffice
+# EXISTING ROUTE - PRESERVED
 # ============================================================
 
 @app.route("/pdf-to-word", methods=["POST"])
 def pdf_to_docx():
 
-    print("==========================================", flush=True)
-    print("PDF TO WORD ROUTE STARTED", flush=True)
-    print("==========================================", flush=True)
+    print(
+        "==========================================",
+        flush=True
+    )
+
+    print(
+        "PDF TO WORD ROUTE STARTED",
+        flush=True
+    )
+
+    print(
+        "==========================================",
+        flush=True
+    )
 
     if "file" not in request.files:
 
-        print("NO FILE RECEIVED", flush=True)
+        print(
+            "NO FILE RECEIVED",
+            flush=True
+        )
 
         return jsonify({
             "error": "No PDF file uploaded."
         }), 400
 
-
     uploaded_file = request.files["file"]
-
 
     if uploaded_file.filename == "":
 
@@ -370,9 +420,7 @@ def pdf_to_docx():
             "error": "No file selected."
         }), 400
 
-
     original_name = uploaded_file.filename
-
 
     if not original_name.lower().endswith(".pdf"):
 
@@ -380,43 +428,37 @@ def pdf_to_docx():
             "error": "Only PDF files are supported."
         }), 400
 
-
     job_id = str(uuid.uuid4())
-
 
     job_folder = os.path.join(
         BASE_FOLDER,
         job_id
     )
 
-
     os.makedirs(
         job_folder,
         exist_ok=True
     )
-
 
     input_file = os.path.join(
         job_folder,
         "input.pdf"
     )
 
-
     output_file = os.path.join(
         job_folder,
         "converted.docx"
     )
 
-
-    uploaded_file.save(input_file)
-
+    uploaded_file.save(
+        input_file
+    )
 
     print(
         "PDF SAVED:",
         input_file,
         flush=True
     )
-
 
     print(
         "PDF SIZE:",
@@ -425,36 +467,23 @@ def pdf_to_docx():
         flush=True
     )
 
-
     try:
 
-        # ----------------------------------------------------
-        # Import pdf2docx
-        # ----------------------------------------------------
-
         from pdf2docx import Converter
-
 
         print(
             "pdf2docx imported successfully",
             flush=True
         )
 
-
-        # ----------------------------------------------------
-        # Convert PDF → DOCX
-        # ----------------------------------------------------
-
         print(
             "STARTING PDF → DOCX CONVERSION",
             flush=True
         )
 
-
         converter = Converter(
             input_file
         )
-
 
         try:
 
@@ -468,24 +497,17 @@ def pdf_to_docx():
 
             converter.close()
 
-
-        # ----------------------------------------------------
-        # Check output
-        # ----------------------------------------------------
-
         print(
             "EXPECTED OUTPUT:",
             output_file,
             flush=True
         )
 
-
         print(
             "OUTPUT EXISTS:",
             os.path.exists(output_file),
             flush=True
         )
-
 
         if os.path.exists(output_file):
 
@@ -504,11 +526,6 @@ def pdf_to_docx():
 
             output_size = 0
 
-
-        # ----------------------------------------------------
-        # SUCCESS
-        # ----------------------------------------------------
-
         if (
             os.path.exists(output_file)
             and
@@ -523,12 +540,10 @@ def pdf_to_docx():
                 ".docx"
             )
 
-
             print(
                 "PDF → DOCX SUCCESS",
                 flush=True
             )
-
 
             return send_file(
 
@@ -545,16 +560,10 @@ def pdf_to_docx():
 
             )
 
-
-        # ----------------------------------------------------
-        # FAILURE
-        # ----------------------------------------------------
-
         print(
             "PDF → DOCX FAILED: Output file was not created.",
             flush=True
         )
-
 
         return jsonify({
 
@@ -566,7 +575,6 @@ def pdf_to_docx():
 
         }), 500
 
-
     except Exception as error:
 
         print(
@@ -574,7 +582,6 @@ def pdf_to_docx():
             repr(error),
             flush=True
         )
-
 
         return jsonify({
 
@@ -586,7 +593,6 @@ def pdf_to_docx():
 
         }), 500
 
-
     finally:
 
         print(
@@ -595,12 +601,387 @@ def pdf_to_docx():
             flush=True
         )
 
-
         shutil.rmtree(
-
             job_folder,
-
             ignore_errors=True
+        )
+
+
+# ============================================================
+# PDF → TEXT / TXT
+# NEW ROUTE
+# ============================================================
+
+@app.route("/pdf-to-text", methods=["POST"])
+def pdf_to_text():
+
+    print(
+        "==========================================",
+        flush=True
+    )
+
+    print(
+        "PDF TO TEXT ROUTE STARTED",
+        flush=True
+    )
+
+    print(
+        "==========================================",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # Check file
+    # --------------------------------------------------------
+
+    if "file" not in request.files:
+
+        print(
+            "NO FILE RECEIVED",
+            flush=True
+        )
+
+        return jsonify({
+            "success": False,
+            "error": "No PDF file uploaded."
+        }), 400
+
+    uploaded_file = request.files["file"]
+
+    if uploaded_file.filename == "":
+
+        return jsonify({
+            "success": False,
+            "error": "No file selected."
+        }), 400
+
+    original_name = uploaded_file.filename
+
+    # --------------------------------------------------------
+    # Check extension
+    # --------------------------------------------------------
+
+    if not original_name.lower().endswith(".pdf"):
+
+        return jsonify({
+            "success": False,
+            "error": "Only PDF files are supported."
+        }), 400
+
+    # --------------------------------------------------------
+    # Safe filename
+    # --------------------------------------------------------
+
+    safe_name = secure_filename(
+        original_name
+    )
+
+    if not safe_name:
+
+        safe_name = "document.pdf"
+
+    # --------------------------------------------------------
+    # Create temporary job folder
+    # --------------------------------------------------------
+
+    job_id = str(uuid.uuid4())
+
+    job_folder = os.path.join(
+        BASE_FOLDER,
+        job_id
+    )
+
+    os.makedirs(
+        job_folder,
+        exist_ok=True
+    )
+
+    input_file = os.path.join(
+        job_folder,
+        "input.pdf"
+    )
+
+    output_file = os.path.join(
+        job_folder,
+        "converted.txt"
+    )
+
+    uploaded_file.save(
+        input_file
+    )
+
+    print(
+        "PDF SAVED:",
+        input_file,
+        flush=True
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # Read PDF
+        # ----------------------------------------------------
+
+        print(
+            "STARTING PDF → TEXT EXTRACTION",
+            flush=True
+        )
+
+        reader = PdfReader(
+            input_file
+        )
+
+        page_count = len(
+            reader.pages
+        )
+
+        print(
+            "PDF PAGE COUNT:",
+            page_count,
+            flush=True
+        )
+
+        extracted_pages = []
+
+        # ----------------------------------------------------
+        # Extract text page by page
+        # ----------------------------------------------------
+
+        for page_number, page in enumerate(
+            reader.pages,
+            start=1
+        ):
+
+            print(
+                f"EXTRACTING PAGE {page_number}/{page_count}",
+                flush=True
+            )
+
+            try:
+
+                text = page.extract_text()
+
+            except Exception as page_error:
+
+                print(
+                    f"PAGE {page_number} ERROR:",
+                    repr(page_error),
+                    flush=True
+                )
+
+                text = ""
+
+            if text:
+
+                text = text.strip()
+
+            if text:
+
+                extracted_pages.append(
+                    text
+                )
+
+        # ----------------------------------------------------
+        # Combine text
+        # ----------------------------------------------------
+
+        final_text = "\n\n".join(
+            extracted_pages
+        ).strip()
+
+        # ----------------------------------------------------
+        # No readable text
+        # ----------------------------------------------------
+
+        if not final_text:
+
+            print(
+                "NO READABLE TEXT FOUND",
+                flush=True
+            )
+
+            return jsonify({
+
+                "success": False,
+
+                "error":
+                "No readable text was found in this PDF.",
+
+                "details":
+                "This may be a scanned or image-only PDF. "
+                "OCR is required to extract text from scanned pages."
+
+            }), 422
+
+        # ----------------------------------------------------
+        # Save TXT
+        # ----------------------------------------------------
+
+        with open(
+            output_file,
+            "w",
+            encoding="utf-8",
+            newline="\n"
+        ) as text_file:
+
+            text_file.write(
+                final_text
+            )
+
+        # ----------------------------------------------------
+        # Verify output
+        # ----------------------------------------------------
+
+        output_exists = os.path.exists(
+            output_file
+        )
+
+        output_size = (
+            os.path.getsize(output_file)
+            if output_exists
+            else 0
+        )
+
+        print(
+            "TEXT OUTPUT EXISTS:",
+            output_exists,
+            flush=True
+        )
+
+        print(
+            "TEXT OUTPUT SIZE:",
+            output_size,
+            "bytes",
+            flush=True
+        )
+
+        if (
+            not output_exists
+            or
+            output_size == 0
+        ):
+
+            return jsonify({
+
+                "success": False,
+
+                "error":
+                "PDF to Text conversion failed.",
+
+                "details":
+                "The TXT file could not be created."
+
+            }), 500
+
+        # ----------------------------------------------------
+        # Download filename
+        # ----------------------------------------------------
+
+        download_name = (
+            os.path.splitext(
+                safe_name
+            )[0]
+            +
+            ".txt"
+        )
+
+        print(
+            "PDF → TEXT SUCCESS",
+            flush=True
+        )
+
+        # ----------------------------------------------------
+        # Send TXT file
+        # ----------------------------------------------------
+
+        return send_file(
+
+            output_file,
+
+            as_attachment=True,
+
+            download_name=download_name,
+
+            mimetype="text/plain; charset=utf-8"
 
         )
 
+    except Exception as error:
+
+        print(
+            "PDF → TEXT ERROR:",
+            repr(error),
+            flush=True
+        )
+
+        return jsonify({
+
+            "success": False,
+
+            "error":
+            "PDF to Text conversion failed.",
+
+            "details":
+            str(error)
+
+        }), 500
+
+    finally:
+
+        print(
+            "CLEANING PDF → TEXT JOB:",
+            job_folder,
+            flush=True
+        )
+
+        shutil.rmtree(
+            job_folder,
+            ignore_errors=True
+        )
+
+
+# ============================================================
+# 404 HANDLER
+# ============================================================
+
+@app.errorhandler(404)
+def not_found(error):
+
+    return jsonify({
+
+        "success": False,
+
+        "error":
+        "Endpoint not found."
+
+    }), 404
+
+
+# ============================================================
+# GLOBAL ERROR HANDLER
+# ============================================================
+
+@app.errorhandler(500)
+def internal_server_error(error):
+
+    return jsonify({
+
+        "success": False,
+
+        "error":
+        "An internal server error occurred."
+
+    }), 500
+
+
+# ============================================================
+# LOCAL DEVELOPMENT
+# ============================================================
+
+if __name__ == "__main__":
+
+    app.run(
+        host="0.0.0.0",
+        port=10000,
+        debug=False
+    )
