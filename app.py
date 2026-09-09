@@ -1,741 +1,240 @@
-import os
-import uuid
-import shutil
-import subprocess
-
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-from werkzeug.utils import secure_filename
-
-from pdf2docx import Converter
-from pypdf import PdfReader
-
-from PIL import Image, ImageOps
-from reportlab.pdfgen import canvas
-from reportlab.lib.utils import ImageReader
-
-
 # =========================================================
-# APP CONFIGURATION
+# MULTIPLE IMAGES → PDF
+# Existing routes are NOT changed.
+# Endpoint: POST /images-to-pdf
 # =========================================================
 
-app = Flask(__name__)
+@app.route("/images-to-pdf", methods=["POST"])
+def convert_multiple_images_to_pdf():
 
-# Allow Blogger / browser frontend requests
-CORS(app)
+    import os
+    import uuid
+    import shutil
 
-# Maximum upload size: 25 MB
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+    from PIL import Image, ImageOps
 
-# Temporary working directory
-BASE_FOLDER = "/tmp/file_converter"
-os.makedirs(BASE_FOLDER, exist_ok=True)
+    MAX_IMAGES = 20
+    MAX_TOTAL_SIZE = 25 * 1024 * 1024
 
+    allowed_extensions = {".jpg", ".jpeg", ".png"}
 
-# =========================================================
-# SECURITY HEADERS
-# =========================================================
+    job_id = uuid.uuid4().hex
+    job_folder = os.path.join(BASE_FOLDER, f"multi-{job_id}")
 
-@app.after_request
-def add_security_headers(response):
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Cache-Control"] = "no-store"
-
-    return response
-
-
-# =========================================================
-# REQUEST LOGGING
-# =========================================================
-
-@app.before_request
-def log_request():
-    print(
-        f"{request.method} {request.path} "
-        f"from {request.remote_addr}"
-    )
-
-
-# =========================================================
-# FILE SIZE ERROR
-# =========================================================
-
-@app.errorhandler(413)
-def request_entity_too_large(error):
-    return jsonify({
-        "success": False,
-        "error": "File is too large. Maximum allowed size is 25 MB."
-    }), 413
-
-
-# =========================================================
-# HOME
-# =========================================================
-
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "name": "PDF Word Converter API",
-        "status": "online",
-        "features": [
-            "DOCX to PDF",
-            "PDF to DOCX",
-            "PDF to TXT",
-            "JPG to PDF",
-            "JPEG to PDF",
-            "PNG to PDF"
-        ]
-    })
-
-
-# =========================================================
-# HEALTH CHECK
-# =========================================================
-
-@app.route("/health", methods=["GET"])
-def health():
-    try:
-        result = subprocess.run(
-            ["libreoffice", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        version = result.stdout.strip()
-
-        return jsonify({
-            "status": "ok",
-            "libreoffice": {
-                "installed": result.returncode == 0,
-                "version": version
-            }
-        })
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "libreoffice": {
-                "installed": False
-            },
-            "error": str(e)
-        }), 500
-
-
-# =========================================================
-# LIBREOFFICE HELPER
-# =========================================================
-
-def run_libreoffice(input_file, output_folder):
-    command = [
-        "libreoffice",
-        "--headless",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        output_folder,
-        input_file
-    ]
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=180
-    )
-
-    print("LibreOffice stdout:", result.stdout)
-    print("LibreOffice stderr:", result.stderr)
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            result.stderr or "LibreOffice conversion failed."
-        )
-
-
-# =========================================================
-# DOCX → PDF
-# EXISTING ROUTE
-# =========================================================
-
-@app.route("/convert", methods=["POST"])
-def convert_word_to_pdf():
-
-    job_id = str(uuid.uuid4())
-    job_folder = os.path.join(BASE_FOLDER, job_id)
+    os.makedirs(job_folder, exist_ok=True)
 
     try:
-        os.makedirs(job_folder, exist_ok=True)
+        files = request.files.getlist("files")
 
-        if "file" not in request.files:
+        if not files:
             return jsonify({
                 "success": False,
-                "error": "Please upload a DOCX file."
+                "error": "Please select at least one JPG, JPEG or PNG image."
             }), 400
 
-        uploaded_file = request.files["file"]
-
-        if not uploaded_file or uploaded_file.filename == "":
+        if len(files) > MAX_IMAGES:
             return jsonify({
                 "success": False,
-                "error": "No file selected."
+                "error": f"Maximum {MAX_IMAGES} images are allowed."
             }), 400
 
-        filename = secure_filename(uploaded_file.filename)
+        total_size = 0
 
-        if not filename:
-            return jsonify({
-                "success": False,
-                "error": "Invalid filename."
-            }), 400
+        for uploaded_file in files:
 
-        extension = os.path.splitext(filename)[1].lower()
+            if not uploaded_file or not uploaded_file.filename:
+                return jsonify({
+                    "success": False,
+                    "error": "One of the selected files is invalid."
+                }), 400
 
-        if extension != ".docx":
-            return jsonify({
-                "success": False,
-                "error": "Only DOCX files are supported."
-            }), 400
+            filename = secure_filename(uploaded_file.filename)
 
-        input_path = os.path.join(job_folder, "input.docx")
+            if not filename:
+                return jsonify({
+                    "success": False,
+                    "error": "Invalid filename detected."
+                }), 400
 
-        uploaded_file.save(input_path)
+            extension = os.path.splitext(filename)[1].lower()
 
-        run_libreoffice(
-            input_path,
-            job_folder
-        )
+            if extension not in allowed_extensions:
+                return jsonify({
+                    "success": False,
+                    "error": "Only JPG, JPEG and PNG images are supported."
+                }), 400
 
-        output_path = os.path.join(
-            job_folder,
-            "input.pdf"
-        )
+            # Check uploaded stream size without trusting client filename
+            uploaded_file.stream.seek(0, os.SEEK_END)
+            file_size = uploaded_file.stream.tell()
+            uploaded_file.stream.seek(0)
 
-        if not os.path.exists(output_path):
-            raise RuntimeError(
-                "PDF conversion failed. Output file was not created."
-            )
+            total_size += file_size
 
-        response = send_file(
-            output_path,
-            mimetype="application/pdf",
-            as_attachment=True,
-            download_name="converted.pdf"
-        )
+            if total_size > MAX_TOTAL_SIZE:
+                return jsonify({
+                    "success": False,
+                    "error": "The total image size must not exceed 25 MB."
+                }), 413
 
-        @response.call_on_close
-        def cleanup():
-            shutil.rmtree(
+        converted_images = []
+
+        for index, uploaded_file in enumerate(files):
+
+            input_path = os.path.join(
                 job_folder,
-                ignore_errors=True
+                f"input_{index}.upload"
             )
 
-        return response
-
-    except Exception as e:
-
-        print(
-            f"DOCX to PDF conversion error: {str(e)}"
-        )
-
-        shutil.rmtree(
-            job_folder,
-            ignore_errors=True
-        )
-
-        return jsonify({
-            "success": False,
-            "error": "Unable to convert DOCX to PDF."
-        }), 500
-
-
-# =========================================================
-# PDF → WORD
-# EXISTING ROUTE
-# =========================================================
-
-@app.route("/pdf-to-word", methods=["POST"])
-def convert_pdf_to_word():
-
-    job_id = str(uuid.uuid4())
-    job_folder = os.path.join(BASE_FOLDER, job_id)
-
-    try:
-        os.makedirs(job_folder, exist_ok=True)
-
-        if "file" not in request.files:
-            return jsonify({
-                "success": False,
-                "error": "Please upload a PDF file."
-            }), 400
-
-        uploaded_file = request.files["file"]
-
-        if not uploaded_file or uploaded_file.filename == "":
-            return jsonify({
-                "success": False,
-                "error": "No PDF file selected."
-            }), 400
-
-        filename = secure_filename(
-            uploaded_file.filename
-        )
-
-        if not filename:
-            return jsonify({
-                "success": False,
-                "error": "Invalid filename."
-            }), 400
-
-        extension = os.path.splitext(filename)[1].lower()
-
-        if extension != ".pdf":
-            return jsonify({
-                "success": False,
-                "error": "Only PDF files are supported."
-            }), 400
-
-        input_path = os.path.join(
-            job_folder,
-            "input.pdf"
-        )
-
-        output_path = os.path.join(
-            job_folder,
-            "converted.docx"
-        )
-
-        uploaded_file.save(input_path)
-
-        converter = Converter(input_path)
-
-        try:
-            converter.convert(output_path)
-
-        finally:
-            converter.close()
-
-        if not os.path.exists(output_path):
-            raise RuntimeError(
-                "DOCX file was not created."
-            )
-
-        response = send_file(
-            output_path,
-            mimetype=(
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
-            ),
-            as_attachment=True,
-            download_name="converted.docx"
-        )
-
-        @response.call_on_close
-        def cleanup():
-            shutil.rmtree(
-                job_folder,
-                ignore_errors=True
-            )
-
-        return response
-
-    except Exception as e:
-
-        print(
-            f"PDF to Word conversion error: {str(e)}"
-        )
-
-        shutil.rmtree(
-            job_folder,
-            ignore_errors=True
-        )
-
-        return jsonify({
-            "success": False,
-            "error": "Unable to convert PDF to Word."
-        }), 500
-
-
-# =========================================================
-# PDF → TEXT
-# EXISTING ROUTE
-# =========================================================
-
-@app.route("/pdf-to-text", methods=["POST"])
-def convert_pdf_to_text():
-
-    job_id = str(uuid.uuid4())
-    job_folder = os.path.join(BASE_FOLDER, job_id)
-
-    try:
-        os.makedirs(job_folder, exist_ok=True)
-
-        if "file" not in request.files:
-            return jsonify({
-                "success": False,
-                "error": "Please upload a PDF file."
-            }), 400
-
-        uploaded_file = request.files["file"]
-
-        if not uploaded_file or uploaded_file.filename == "":
-            return jsonify({
-                "success": False,
-                "error": "No PDF file selected."
-            }), 400
-
-        filename = secure_filename(
-            uploaded_file.filename
-        )
-
-        if not filename:
-            return jsonify({
-                "success": False,
-                "error": "Invalid filename."
-            }), 400
-
-        extension = os.path.splitext(filename)[1].lower()
-
-        if extension != ".pdf":
-            return jsonify({
-                "success": False,
-                "error": "Only PDF files are supported."
-            }), 400
-
-        input_path = os.path.join(
-            job_folder,
-            "input.pdf"
-        )
-
-        output_path = os.path.join(
-            job_folder,
-            "converted.txt"
-        )
-
-        uploaded_file.save(input_path)
-
-        reader = PdfReader(input_path)
-
-        extracted_text = []
-
-        for page_number, page in enumerate(
-            reader.pages,
-            start=1
-        ):
+            uploaded_file.save(input_path)
 
             try:
-                text = page.extract_text() or ""
+                # Verify that the file is actually a valid image.
+                with Image.open(input_path) as test_image:
+                    test_image.verify()
 
-            except Exception as page_error:
+            except Exception:
+                return jsonify({
+                    "success": False,
+                    "error": f"Image {index + 1} is not a valid JPG, JPEG or PNG file."
+                }), 400
 
-                print(
-                    f"Page {page_number} text extraction error: "
-                    f"{page_error}"
-                )
+            try:
+                with Image.open(input_path) as image:
 
-                text = ""
+                    # Correct phone-camera orientation.
+                    image = ImageOps.exif_transpose(image)
 
-            extracted_text.append(
-                f"--- Page {page_number} ---\n{text.strip()}"
-            )
+                    # Convert transparent / palette images safely.
+                    if image.mode in ("RGBA", "LA", "P"):
+                        background = Image.new(
+                            "RGB",
+                            image.size,
+                            "white"
+                        )
 
-        final_text = "\n\n".join(
-            extracted_text
-        ).strip()
+                        if image.mode == "P":
+                            image = image.convert("RGBA")
 
-        if not final_text:
-            shutil.rmtree(
-                job_folder,
-                ignore_errors=True
-            )
+                        background.paste(
+                            image,
+                            mask=image.getchannel("A")
+                            if "A" in image.getbands()
+                            else None
+                        )
 
+                        image = background
+
+                    else:
+                        image = image.convert("RGB")
+
+                    output_image = os.path.join(
+                        job_folder,
+                        f"page_{index:03d}.jpg"
+                    )
+
+                    # Re-save as JPEG so every PDF page uses
+                    # a predictable RGB image format.
+                    image.save(
+                        output_image,
+                        "JPEG",
+                        quality=92,
+                        optimize=True
+                    )
+
+                    converted_images.append(output_image)
+
+            except Exception as e:
+                print("Image processing error:", str(e))
+
+                return jsonify({
+                    "success": False,
+                    "error": f"Could not process image {index + 1}."
+                }), 400
+
+        if not converted_images:
             return jsonify({
                 "success": False,
-                "error": (
-                    "No readable text was found in this PDF. "
-                    "The PDF may be scanned or image-based."
-                )
-            }), 422
-
-        with open(
-            output_path,
-            "w",
-            encoding="utf-8"
-        ) as text_file:
-
-            text_file.write(final_text)
-
-        response = send_file(
-            output_path,
-            mimetype="text/plain; charset=utf-8",
-            as_attachment=True,
-            download_name="converted.txt"
-        )
-
-        @response.call_on_close
-        def cleanup():
-            shutil.rmtree(
-                job_folder,
-                ignore_errors=True
-            )
-
-        return response
-
-    except Exception as e:
-
-        print(
-            f"PDF to Text conversion error: {str(e)}"
-        )
-
-        shutil.rmtree(
-            job_folder,
-            ignore_errors=True
-        )
-
-        return jsonify({
-            "success": False,
-            "error": "Unable to extract text from PDF."
-        }), 500
-
-
-# =========================================================
-# IMAGE → PDF
-# JPG / JPEG / PNG
-# NEW ROUTE
-# =========================================================
-
-@app.route("/image-to-pdf", methods=["POST"])
-def convert_image_to_pdf():
-
-    job_id = str(uuid.uuid4())
-    job_folder = os.path.join(
-        BASE_FOLDER,
-        job_id
-    )
-
-    try:
-        os.makedirs(
-            job_folder,
-            exist_ok=True
-        )
-
-        # -------------------------------------------------
-        # Check upload
-        # -------------------------------------------------
-
-        if "file" not in request.files:
-            return jsonify({
-                "success": False,
-                "error": "Please upload an image file."
-            }), 400
-
-        uploaded_file = request.files["file"]
-
-        if (
-            not uploaded_file
-            or uploaded_file.filename == ""
-        ):
-            return jsonify({
-                "success": False,
-                "error": "No image file selected."
+                "error": "No valid images were found."
             }), 400
 
         # -------------------------------------------------
-        # Secure filename
+        # Create ONE PDF containing all images
+        # in the exact order received.
         # -------------------------------------------------
 
-        filename = secure_filename(
-            uploaded_file.filename
-        )
-
-        if not filename:
-            return jsonify({
-                "success": False,
-                "error": "Invalid filename."
-            }), 400
-
-        extension = os.path.splitext(
-            filename
-        )[1].lower()
-
-        # -------------------------------------------------
-        # Allowed formats
-        # -------------------------------------------------
-
-        allowed_extensions = {
-            ".jpg",
-            ".jpeg",
-            ".png"
-        }
-
-        if extension not in allowed_extensions:
-            return jsonify({
-                "success": False,
-                "error": (
-                    "Only JPG, JPEG and PNG "
-                    "images are supported."
-                )
-            }), 400
-
-        # -------------------------------------------------
-        # Save uploaded image
-        # -------------------------------------------------
-
-        input_path = os.path.join(
+        pdf_path = os.path.join(
             job_folder,
-            "input" + extension
+            "multiple-images.pdf"
         )
 
-        output_path = os.path.join(
-            job_folder,
-            "converted-image.pdf"
-        )
-
-        uploaded_file.save(input_path)
-
-        # -------------------------------------------------
-        # Validate image
-        # -------------------------------------------------
+        pdf_images = []
 
         try:
 
-            with Image.open(input_path) as image:
+            for image_path in converted_images:
+                image = Image.open(image_path)
 
-                image.verify()
+                # Load into memory before closing file handle.
+                image.load()
 
-        except Exception:
+                pdf_images.append(image)
 
-            shutil.rmtree(
-                job_folder,
-                ignore_errors=True
-            )
+            first_image = pdf_images[0]
+            remaining_images = pdf_images[1:]
 
-            return jsonify({
-                "success": False,
-                "error": (
-                    "The uploaded file is not "
-                    "a valid JPG, JPEG or PNG image."
-                )
-            }), 400
-
-        # -------------------------------------------------
-        # Open image again after verify()
-        # -------------------------------------------------
-
-        with Image.open(input_path) as image:
-
-            # Correct phone-camera orientation
-            image = ImageOps.exif_transpose(
-                image
-            )
-
-            # -------------------------------------------------
-            # Convert to RGB
-            #
-            # PDF doesn't directly support all PNG modes.
-            # Transparent PNG areas become white.
-            # -------------------------------------------------
-
-            if image.mode in (
-                "RGBA",
-                "LA"
-            ):
-
-                background = Image.new(
-                    "RGB",
-                    image.size,
-                    "white"
-                )
-
-                alpha = image.getchannel("A")
-
-                background.paste(
-                    image,
-                    mask=alpha
-                )
-
-                image = background
-
-            elif image.mode == "P":
-
-                image = image.convert(
-                    "RGBA"
-                )
-
-                background = Image.new(
-                    "RGB",
-                    image.size,
-                    "white"
-                )
-
-                alpha = image.getchannel("A")
-
-                background.paste(
-                    image,
-                    mask=alpha
-                )
-
-                image = background
-
-            else:
-
-                image = image.convert(
-                    "RGB"
-                )
-
-            # -------------------------------------------------
-            # Save as PDF
-            # -------------------------------------------------
-
-            image.save(
-                output_path,
+            first_image.save(
+                pdf_path,
                 "PDF",
-                resolution=100.0
+                resolution=100.0,
+                save_all=True,
+                append_images=remaining_images
             )
 
-        # -------------------------------------------------
-        # Verify PDF exists
-        # -------------------------------------------------
+        finally:
 
-        if not os.path.exists(
-            output_path
-        ):
+            for image in pdf_images:
+                try:
+                    image.close()
+                except Exception:
+                    pass
 
-            raise RuntimeError(
-                "PDF file was not created."
-            )
+        if not os.path.exists(pdf_path):
+            raise RuntimeError("PDF file was not created.")
 
-        # -------------------------------------------------
-        # Send PDF
-        # -------------------------------------------------
+        if os.path.getsize(pdf_path) == 0:
+            raise RuntimeError("Generated PDF is empty.")
 
-        response = send_file(
-            output_path,
-            mimetype="application/pdf",
-            as_attachment=True,
-            download_name="converted-image.pdf"
+        print(
+            f"Multiple images converted successfully: "
+            f"{len(converted_images)} images"
         )
 
-        # -------------------------------------------------
-        # Cleanup after response
-        # -------------------------------------------------
+        response = send_file(
+            pdf_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="multiple-images.pdf"
+        )
 
+        # Delete temporary files after response is finished.
         @response.call_on_close
         def cleanup():
-
-            shutil.rmtree(
-                job_folder,
-                ignore_errors=True
-            )
+            try:
+                shutil.rmtree(job_folder, ignore_errors=True)
+            except Exception as cleanup_error:
+                print(
+                    "Cleanup error:",
+                    str(cleanup_error)
+                )
 
         return response
 
     except Exception as e:
 
         print(
-            f"Image to PDF conversion error: {str(e)}"
+            "Multiple image conversion error:",
+            str(e)
         )
 
         shutil.rmtree(
@@ -745,52 +244,5 @@ def convert_image_to_pdf():
 
         return jsonify({
             "success": False,
-            "error": (
-                "Unable to convert the image to PDF."
-            )
+            "error": "Unable to create the PDF. Please try again."
         }), 500
-
-
-# =========================================================
-# 404 HANDLER
-# =========================================================
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({
-        "success": False,
-        "error": "Endpoint not found."
-    }), 404
-
-
-# =========================================================
-# 500 HANDLER
-# =========================================================
-
-@app.errorhandler(500)
-def internal_server_error(error):
-    return jsonify({
-        "success": False,
-        "error": "An internal server error occurred."
-    }), 500
-
-
-# =========================================================
-# LOCAL DEVELOPMENT
-# Render uses Gunicorn
-# =========================================================
-
-if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            10000
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        debug=False
-    )
