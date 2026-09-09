@@ -17,14 +17,18 @@ RUN apt-get update && \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy backend
 COPY app.py .
 
+# Temporary conversion directory
 RUN mkdir -p /tmp/file_converter
 
 EXPOSE 10000
 
+# Start Flask using Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "1", "--timeout", "180", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
