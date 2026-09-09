@@ -1,4 +1,5 @@
-flask
-gunicorn
-flask-cors
-pdf2docx
+Flask>=3.0,<4.0
+gunicorn>=22.0,<24.0
+flask-cors>=4.0,<7.0
+pdf2docx>=0.5.8
+pypdf>=5.0,<7.0
